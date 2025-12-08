@@ -33,6 +33,7 @@ const companySchema = new mongoose.Schema({
   max_activations: Number,
   current_activations: { type: Number, default: 0 }
 });
+
 // Verified Insiders Schema
 const memberSchema = new mongoose.Schema({
   work_email: { type: String, unique: true, required: true },
@@ -52,8 +53,8 @@ const memberSchema = new mongoose.Schema({
   total_spent: { type: Number, default: 0 }
 });
 
-const CompanyCode = mongoose.model('CompanyCode', companySchema, 'company_codes');
-const Member = mongoose.model('Member', memberSchema);
+const CompanyCode = mongoose.model('CompanyCode', companySchema, 'companycodes');
+const Member = mongoose.model('Member', memberSchema, 'members');
 
 
 // ===== EMAIL SETUP =====
@@ -160,7 +161,7 @@ app.post('/api/verify-form', async (req, res) => {
       `
     };
 
-    await sgMail.send(msg);
+    // await sgMail.send(msg);
 
     res.json({ 
       success: true, 
@@ -168,9 +169,11 @@ app.post('/api/verify-form', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Form submission error:', error);
-    res.status(500).json({ error: 'An error occurred. Please try again.' });
-  }
+  console.error('Form submission error:', error.message);
+  console.error('Full error:', error);
+  res.status(500).json({ error: 'An error occurred. Please try again.' });
+}
+
 });
 
 // 2. VERIFY EMAIL TOKEN & CREATE ACCOUNT
@@ -313,7 +316,7 @@ app.get('/api/verify-email', async (req, res) => {
       `
     };
 
-    await sgMail.send(confirm_msg);
+    // await sgMail.send(confirm_msg);
 
     res.json({
       success: true,
@@ -323,9 +326,11 @@ app.get('/api/verify-email', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Verification error:', error);
-    res.status(500).json({ error: 'An error occurred during verification.' });
-  }
+  console.error('Verification error:', error.message);
+  console.error('Full error:', error);
+  res.status(500).json({ error: 'An error occurred during verification.' });
+}
+
 });
 
 // 3. ADMIN: Add Company Code
