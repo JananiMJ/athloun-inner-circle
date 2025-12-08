@@ -33,7 +33,6 @@ const companySchema = new mongoose.Schema({
   max_activations: Number,
   current_activations: { type: Number, default: 0 }
 });
-
 // Verified Insiders Schema
 const memberSchema = new mongoose.Schema({
   work_email: { type: String, unique: true, required: true },
@@ -53,8 +52,9 @@ const memberSchema = new mongoose.Schema({
   total_spent: { type: Number, default: 0 }
 });
 
-const CompanyCode = mongoose.model('CompanyCode', companySchema);
+const CompanyCode = mongoose.model('CompanyCode', companySchema, 'company_codes');
 const Member = mongoose.model('Member', memberSchema);
+
 
 // ===== EMAIL SETUP =====
 const sgMail = require('@sendgrid/mail');
