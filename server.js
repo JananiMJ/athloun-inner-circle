@@ -267,12 +267,12 @@ app.get('/api/verify-email', async (req, res) => {
 });
 
 // 3) Admin: create company code
+
 app.post('/api/admin/company-codes', async (req, res) => {
   try {
     if (req.headers['x-admin-key'] !== process.env.ADMIN_KEY) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
-
     const {
       company_code,
       company_name,
