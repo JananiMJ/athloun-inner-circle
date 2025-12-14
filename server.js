@@ -133,38 +133,25 @@ app.post('/api/verify-form', async (req, res) => {
     const verification_link =
       `${process.env.FRONTEND_URL}/pages/insider?token=${verification_token}&email=${encodeURIComponent(work_email)}`;
 
-    const msg = {
+
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
       to: work_email,
-      from: process.env.SENDGRID_FROM_EMAIL,
       subject: 'Verify Your ATHLOUN Inner Circle Access',
       html: `
         <p>Click the button below to verify your email and activate your 15% discount:</p>
         <p><a href="${verification_link}">Verify Email</a></p>
         <p>This link expires in 24 hours.</p>
       `
-    };
-
-    await transporter.sendMail({
-  from: process.env.GMAIL_USER,
-  to: work_email,
-  subject: 'Verify Your ATHLOUN Inner Circle Access',
-  html: `
-    <p>Click the button below to verify your email and activate your 15% discount:</p>
-    <p><a href="${verification_link}">Verify Email</a></p>
-    <p>This link expires in 24 hours.</p>
-  `
-});
-
-
-    res.json({
+    });
+ res.json({
       success: true,
       message: `Check your email! We sent a verification link to ${work_email}.`
     });
   } catch (error) {
-  console.error('Form submission error:', error);
-  res.status(500).json({ error: error.message || 'An error occurred. Please try again.' });
-}
-
+    console.error('Form submission error:', error);
+    res.status(500).json({ error: error.message || 'An error occurred. Please try again.' });
+  }
 });
 
 // 2) Verify email + create Shopify discount
@@ -262,13 +249,7 @@ app.get('/api/verify-email', async (req, res) => {
       { $inc: { current_activations: 1 } }
     );
 
-    // Confirmation email
-    const confirm_msg = {
-      to: email,
-      from: process.env.SENDGRID_FROM_EMAIL,
-      subject: 'Your ATHLOUN Inner Circle Discount Code',
-      html: `<p>Your code: <strong>${discount_code}</strong></p>`
-    };
+    
     
     await transporter.sendMail({
   from: process.env.GMAIL_USER,
@@ -277,12 +258,12 @@ app.get('/api/verify-email', async (req, res) => {
   html: `<p>Your code: <strong>${discount_code}</strong></p>`
 });
 
-    res.json({
-      success: true,
-      message: 'Email verified! Your discount code has been generated.',
-      discount_code,
-      first_name
-    });
+res.json({
+  success: true,
+  message: 'Email verified! Your discount code has been generated.',
+  discount_code,
+  first_name
+});
   } catch (error) {
     console.error('Verification error:', error);
     res.status(500).json({ error: 'An error occurred during verification.' });
