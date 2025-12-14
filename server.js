@@ -144,7 +144,17 @@ app.post('/api/verify-form', async (req, res) => {
       `
     };
 
-    await sgMail.send(msg);
+    await transporter.sendMail({
+  from: process.env.GMAIL_USER,
+  to: work_email,
+  subject: 'Verify Your ATHLOUN Inner Circle Access',
+  html: `
+    <p>Click the button below to verify your email and activate your 15% discount:</p>
+    <p><a href="${verification_link}">Verify Email</a></p>
+    <p>This link expires in 24 hours.</p>
+  `
+});
+
 
     res.json({
       success: true,
@@ -259,7 +269,13 @@ app.get('/api/verify-email', async (req, res) => {
       subject: 'Your ATHLOUN Inner Circle Discount Code',
       html: `<p>Your code: <strong>${discount_code}</strong></p>`
     };
-    await sgMail.send(confirm_msg);
+    
+    await transporter.sendMail({
+  from: process.env.GMAIL_USER,
+  to: email,
+  subject: 'Your ATHLOUN Inner Circle Discount Code',
+  html: `<p>Your code: <strong>${discount_code}</strong></p>`
+});
 
     res.json({
       success: true,
