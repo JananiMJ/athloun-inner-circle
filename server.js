@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
-const sgMail = require('@sendgrid/mail');
+const nodemailer = require('nodemailer');
+
 require('dotenv').config();
 
 const app = express();
@@ -52,7 +53,13 @@ const CompanyCode = mongoose.model('CompanyCode', companySchema, 'companycodes')
 const Member = mongoose.model('Member', memberSchema, 'members');
 
 // ===== SENDGRID =====
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD
+  }
+});
 
 // ===== ROUTES =====
 
