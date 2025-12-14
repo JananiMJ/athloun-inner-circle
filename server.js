@@ -56,7 +56,7 @@ const Member = mongoose.model('Member', memberSchema, 'members');
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   host: 'smtp.gmail.com',
-  port: 465,
+  port: 587,
   secure: false,
   auth: {
     user: process.env.GMAIL_USER,
@@ -116,49 +116,110 @@ app.post('/api/verify-form', async (req, res) => {
       });
     }
 
-    const verification_token = crypto.randomBytes(32).toString('hex');
-    const token_expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    // ✓ AUTO-VERIFY - Skip email, create discount immediately
+    const first_part = work_email.split('@')[0];
+    const first_name = first_part.charAt(0).toUpperCase() + first_part.slice(1);
+    const random_code = crypto.randomBytes(3).toString('hex').toUpperCase();
+    const discount_code = `INNERCIRCLE-${first_name.toUpperCase()}-${random_code}`;
 
+    const shopify_api = `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01`;
+    const shopify_headers = {
+      'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN,
+      'Content-Type': 'application/json'
+    };
+
+    // Find or create customer
+    let customer_response = await axios.get(
+      `${shopify_api}/customers/search.json?query=email:${work_email}`,
+      { headers: shopify_headers }
+    ).catch(() => ({ data: { customers: [] } }));
+
+    let shopify_customer_id;
+    if (customer_response.data.customers.length > 0) {
+      shopify_customer_id = customer_response.data.customers[0].id;
+    } else {
+      const create_customer = await axios.post(
+        `${shopify_api}/customers.json`,
+        {
+          customer: {
+            email: work_email,
+            first_name,
+            verified_email: true
+          }
+        },
+        { headers: shopify_headers }
+      );
+      shopify_customer_id = create_customer.data.customer.id;
+    }
+
+    // Create price rule
+    const price_rule = await axios.post(
+      `${shopify_api}/price_rules.json`,
+      {
+        price_rule: {
+          title: `Inner Circle - ${first_name}`,
+          target_type: 'line_item',
+          target_selection: 'all',
+          allocation_method: 'across',
+          value: -15,
+          value_type: 'percentage',
+          customer_selection: 'all',
+          starts_at: new Date().toISOString(),
+          usage_limit: null,
+          once_per_customer: false
+        }
+      },
+      { headers: shopify_headers }
+    );
+
+    const price_rule_id = price_rule.data.price_rule.id;
+
+    // Create discount code
+    await axios.post(
+      `${shopify_api}/price_rules/${price_rule_id}/discount_codes.json`,
+      { discount_code: { code: discount_code } },
+      { headers: shopify_headers }
+    );
+
+    // Save member as verified immediately
     let member = await Member.findOne({ work_email });
     if (!member) {
       member = new Member({
         work_email,
         company_code,
         company_name: company.company_name,
-        verification_token,
-        token_expires_at,
-        verification_status: 'pending'
+        first_name,
+        verification_status: 'verified',
+        verified_at: new Date(),
+        shopify_customer_id,
+        discount_code
       });
     } else {
-      member.verification_token = verification_token;
-      member.token_expires_at = token_expires_at;
-      member.verification_status = 'pending';
+      member.verification_status = 'verified';
+      member.verified_at = new Date();
+      member.shopify_customer_id = shopify_customer_id;
+      member.discount_code = discount_code;
     }
     await member.save();
 
-    const verification_link =
-      `${process.env.FRONTEND_URL}/pages/insider?token=${verification_token}&email=${encodeURIComponent(work_email)}`;
+    await CompanyCode.updateOne(
+      { company_code: member.company_code },
+      { $inc: { current_activations: 1 } }
+    );
 
-
-    await transporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: work_email,
-      subject: 'Verify Your ATHLOUN Inner Circle Access',
-      html: `
-        <p>Click the button below to verify your email and activate your 15% discount:</p>
-        <p><a href="${verification_link}">Verify Email</a></p>
-        <p>This link expires in 24 hours.</p>
-      `
-    });
- res.json({
+    res.json({
       success: true,
-      message: `Check your email! We sent a verification link to ${work_email}.`
+      message: 'Success! Your discount code has been generated.',
+      discount_code,
+      first_name
     });
+
   } catch (error) {
     console.error('Form submission error:', error);
     res.status(500).json({ error: error.message || 'An error occurred. Please try again.' });
   }
 });
+
 
 // 2) Verify email + create Shopify discount
 app.get('/api/verify-email', async (req, res) => {
