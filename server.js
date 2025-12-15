@@ -68,113 +68,145 @@ app.post('/api/verify-form', async (req, res) => {
   try {
     const { company_code, work_email } = req.body;
 
-    // Validate inputs
     if (!company_code || !work_email) {
       return res.status(400).json({ error: 'All fields required' });
     }
 
-    // Check if company code exists and is active
     const company = await CompanyCode.findOne({ company_code, active: true });
     if (!company) {
-      return res.status(400).json({ 
-        error: 'Invalid code. Please check your Inner Circle card and try again.' 
+      return res.status(400).json({
+        error: 'Invalid code. Please check your Inner Circle card and try again.'
       });
     }
 
-    // Check if code is expired
     if (company.expires_at && new Date() > company.expires_at) {
-      return res.status(400).json({ 
-        error: 'This Insider program is no longer active. Contact support for assistance.' 
+      return res.status(400).json({
+        error: 'This Insider program is no longer active. Contact support for assistance.'
       });
     }
 
-    // Check if max activations reached
     if (company.max_activations && company.current_activations >= company.max_activations) {
-      return res.status(400).json({ 
-        error: 'This company code has reached its activation limit.' 
+      return res.status(400).json({
+        error: 'This company code has reached its activation limit.'
       });
     }
 
-    // Extract email domain
     const email_domain = work_email.split('@')[1];
-
-    // Check if email domain matches company
     if (email_domain !== company.allowed_domain) {
-      return res.status(400).json({ 
-        error: `This email domain is not eligible. Use your @${company.allowed_domain} work email.` 
+      return res.status(400).json({
+        error: `This email domain is not eligible. Use your @${company.allowed_domain} work email.`
       });
     }
 
-    // Check if email already verified
     const existing = await Member.findOne({ work_email, verification_status: 'verified' });
     if (existing) {
-      return res.status(400).json({ 
-        error: 'This email is already registered. Log in to your account to access your discount.' 
+      return res.status(400).json({
+        error: 'This email is already registered. Log in to your account to access your discount.'
       });
     }
 
-    // Generate verification token (24 hours validity)
-    const verification_token = crypto.randomBytes(32).toString('hex');
-    const token_expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    // ---- generate discount code ----
+    const first_part = work_email.split('@')[0];
+    const first_name = first_part.charAt(0).toUpperCase() + first_part.slice(1);
+    const random_code = crypto.randomBytes(3).toString('hex').toUpperCase();
+    const discount_code = `INNERCIRCLE-${first_name.toUpperCase()}-${random_code}`;
 
-    // Create/Update member record
+    // ---- Shopify customer + price rule ----
+    const shopify_api = `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01`;
+    const shopify_headers = {
+      'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN,
+      'Content-Type': 'application/json'
+    };
+
+    let customer_response = await axios.get(
+      `${shopify_api}/customers/search.json?query=email:${work_email}`,
+      { headers: shopify_headers }
+    ).catch(() => ({ data: { customers: [] } }));
+
+    let shopify_customer_id;
+    if (customer_response.data.customers.length > 0) {
+      shopify_customer_id = customer_response.data.customers[0].id;
+    } else {
+      const create_customer = await axios.post(
+        `${shopify_api}/customers.json`,
+        {
+          customer: {
+            email: work_email,
+            first_name,
+            verified_email: true
+          }
+        },
+        { headers: shopify_headers }
+      );
+      shopify_customer_id = create_customer.data.customer.id;
+    }
+
+    const price_rule = await axios.post(
+      `${shopify_api}/price_rules.json`,
+      {
+        price_rule: {
+          title: `Inner Circle - ${first_name}`,
+          target_type: 'line_item',
+          target_selection: 'all',
+          allocation_method: 'across',
+          value: -15,
+          value_type: 'percentage',
+          customer_selection: 'all',
+          starts_at: new Date().toISOString(),
+          usage_limit: null,
+          once_per_customer: false
+        }
+      },
+      { headers: shopify_headers }
+    );
+
+    const price_rule_id = price_rule.data.price_rule.id;
+
+    await axios.post(
+      `${shopify_api}/price_rules/${price_rule_id}/discount_codes.json`,
+      { discount_code: { code: discount_code } },
+      { headers: shopify_headers }
+    );
+
+    // ---- save member ----
     let member = await Member.findOne({ work_email });
     if (!member) {
       member = new Member({
         work_email,
         company_code,
         company_name: company.company_name,
-        verification_token,
-        token_expires_at,
-        verification_status: 'pending'
+        first_name,
+        shopify_customer_id,
+        discount_code,
+        verification_status: 'verified',
+        verified_at: new Date()
       });
     } else {
-      member.verification_token = verification_token;
-      member.token_expires_at = token_expires_at;
-      member.verification_status = 'pending';
+      member.shopify_customer_id = shopify_customer_id;
+      member.discount_code = discount_code;
+      member.verification_status = 'verified';
+      member.verified_at = new Date();
     }
-
     await member.save();
 
-    // Send verification email
-    const verification_link = `${process.env.FRONTEND_URL}/insider/verify?token=${verification_token}&email=${encodeURIComponent(work_email)}`;
+    await CompanyCode.updateOne(
+      { company_code: member.company_code },
+      { $inc: { current_activations: 1 } }
+    );
 
-    const msg = {
-      to: work_email,
-      from: process.env.SENDGRID_FROM_EMAIL,
-      subject: 'Verify Your ATHLOUN Inner Circle Access',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #f4a460 0%, #cd853f 100%); padding: 30px; text-align: center; color: white;">
-            <h1 style="margin: 0;">Welcome to ATHLOUN Inner Circle</h1>
-          </div>
-          <div style="padding: 30px; background: #f9f9f9;">
-            <h2>Verify Your Access</h2>
-            <p>Click the button below to verify your email and activate your 15% discount:</p>
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${verification_link}" style="background: #cd853f; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">Verify Email</a>
-            </div>
-            <p style="color: #666; font-size: 12px;">This link expires in 24 hours.</p>
-            <p style="color: #666; font-size: 12px;">Questions? Contact support@athloun.com</p>
-          </div>
-        </div>
-      `
-    };
-
-    // await sgMail.send(msg);
-
-    res.json({ 
-      success: true, 
-      message: `Check your email! We sent a verification link to ${work_email}.` 
+    return res.json({
+      success: true,
+      message: 'Success! Your discount code has been generated.',
+      discount_code,
+      first_name
     });
 
   } catch (error) {
-  console.error('Form submission error:', error.message);
-  console.error('Full error:', error);
-  res.status(500).json({ error: 'An error occurred. Please try again.' });
-}
-
+    console.error('Form submission error:', error);
+    return res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
 });
+
 
 // 2. VERIFY EMAIL TOKEN & CREATE ACCOUNT
 app.get('/api/verify-email', async (req, res) => {
