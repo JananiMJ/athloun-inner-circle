@@ -75,6 +75,7 @@ app.get('/health', (req, res) => {
 });
 
 // 1) Submit verification form
+// 1) Submit verification form
 app.post('/api/verify-form', async (req, res) => {
   try {
     const { company_code, work_email } = req.body;
@@ -116,72 +117,11 @@ app.post('/api/verify-form', async (req, res) => {
       });
     }
 
-    // ✓ AUTO-VERIFY - Skip email, create discount immediately
+    // SIMPLIFIED: Skip Shopify for now, just save to MongoDB
     const first_part = work_email.split('@')[0];
     const first_name = first_part.charAt(0).toUpperCase() + first_part.slice(1);
-    const random_code = crypto.randomBytes(3).toString('hex').toUpperCase();
-    const discount_code = `INNERCIRCLE-${first_name.toUpperCase()}-${random_code}`;
+    const discount_code = `INNERCIRCLE-${first_name.toUpperCase()}-TEST123`;
 
-    const shopify_api = `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01`;
-    const shopify_headers = {
-      'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN,
-      'Content-Type': 'application/json'
-    };
-
-    // Find or create customer
-    let customer_response = await axios.get(
-      `${shopify_api}/customers/search.json?query=email:${work_email}`,
-      { headers: shopify_headers }
-    ).catch(() => ({ data: { customers: [] } }));
-
-    let shopify_customer_id;
-    if (customer_response.data.customers.length > 0) {
-      shopify_customer_id = customer_response.data.customers[0].id;
-    } else {
-      const create_customer = await axios.post(
-        `${shopify_api}/customers.json`,
-        {
-          customer: {
-            email: work_email,
-            first_name,
-            verified_email: true
-          }
-        },
-        { headers: shopify_headers }
-      );
-      shopify_customer_id = create_customer.data.customer.id;
-    }
-
-    // Create price rule
-    const price_rule = await axios.post(
-      `${shopify_api}/price_rules.json`,
-      {
-        price_rule: {
-          title: `Inner Circle - ${first_name}`,
-          target_type: 'line_item',
-          target_selection: 'all',
-          allocation_method: 'across',
-          value: -15,
-          value_type: 'percentage',
-          customer_selection: 'all',
-          starts_at: new Date().toISOString(),
-          usage_limit: null,
-          once_per_customer: false
-        }
-      },
-      { headers: shopify_headers }
-    );
-
-    const price_rule_id = price_rule.data.price_rule.id;
-
-    // Create discount code
-    await axios.post(
-      `${shopify_api}/price_rules/${price_rule_id}/discount_codes.json`,
-      { discount_code: { code: discount_code } },
-      { headers: shopify_headers }
-    );
-
-    // Save member as verified immediately
     let member = await Member.findOne({ work_email });
     if (!member) {
       member = new Member({
@@ -189,16 +129,14 @@ app.post('/api/verify-form', async (req, res) => {
         company_code,
         company_name: company.company_name,
         first_name,
+        discount_code,
         verification_status: 'verified',
-        verified_at: new Date(),
-        shopify_customer_id,
-        discount_code
+        verified_at: new Date()
       });
     } else {
+      member.discount_code = discount_code;
       member.verification_status = 'verified';
       member.verified_at = new Date();
-      member.shopify_customer_id = shopify_customer_id;
-      member.discount_code = discount_code;
     }
     await member.save();
 
@@ -219,6 +157,7 @@ app.post('/api/verify-form', async (req, res) => {
     res.status(500).json({ error: error.message || 'An error occurred. Please try again.' });
   }
 });
+
 
 
 // 2) Verify email + create Shopify discount
