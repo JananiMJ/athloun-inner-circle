@@ -54,9 +54,17 @@ const memberSchema = new mongoose.Schema({
 const CompanyCode = mongoose.model('CompanyCode', companySchema, 'companycodes');
 const Member = mongoose.model('Member', memberSchema, 'members');
 
-// ===== SENDGRID SETUP =====
-const sgMail = require('@sendgrid/mail');
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// ===== GMAIL NODEMAILER SETUP =====
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.GMAIL_USER,          // your Gmail address
+    pass: process.env.GMAIL_APP_PASSWORD   // Gmail app password
+  }
+});
 
 // ===== ROUTES =====
 
@@ -128,9 +136,10 @@ app.post('/api/verify-form', async (req, res) => {
     const verification_link =
       `${process.env.FRONTEND_URL}?token=${verification_token}&email=${encodeURIComponent(work_email)}`;
 
-    const msg = {
+    // Send verification email via Gmail
+    await transporter.sendMail({
       to: work_email,
-      from: process.env.SENDGRID_FROM_EMAIL,
+      from: process.env.GMAIL_USER,
       subject: 'Verify Your ATHLOUN Inner Circle Access',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -147,10 +156,7 @@ app.post('/api/verify-form', async (req, res) => {
           </div>
         </div>
       `
-    };
-
-    // Uncomment when you are ready to send emails
-    // await sgMail.send(msg);
+    });
 
     return res.json({
       success: true,
