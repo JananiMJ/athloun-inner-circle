@@ -202,9 +202,14 @@ app.post('/api/verify-form', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Form submission error:', error);
-    return res.status(500).json({ error: 'An error occurred. Please try again.' });
+  console.error('Form submission error:', error.message);
+  if (error.response) {
+    console.error('Shopify status:', error.response.status);
+    console.error('Shopify data:', error.response.data);
   }
+  return res.status(500).json({ error: 'An error occurred. Please try again.' });
+}
+
 });
 
 
