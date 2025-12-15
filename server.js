@@ -162,11 +162,12 @@ app.post('/api/verify-form', async (req, res) => {
       success: true,
       message: `Check your email! We sent a verification link to ${work_email}.`
     });
-  } catch (error) {
-    console.error('Form submission error:', error.message);
-    console.error('Full error:', error);
-    return res.status(500).json({ error: 'An error occurred. Please try again.' });
-  }
+  console.log('Verification email sent to', work_email);
+} catch (mailErr) {
+  console.error('Email send error:', mailErr.message);
+  console.error('Full mail error:', mailErr);
+  return res.status(500).json({ error: 'Could not send verification email.' });
+}
 });
 
 // 2) Verify email + create Shopify discount
