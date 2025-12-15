@@ -48,11 +48,11 @@ const memberSchema = new mongoose.Schema({
   total_spent: { type: Number, default: 0 }
 });
 
-// Explicit collection names – you chose `companycodes`
+// Explicit collection names
 const CompanyCode = mongoose.model('CompanyCode', companySchema, 'companycodes');
 const Member = mongoose.model('Member', memberSchema, 'members');
 
-// ===== SENDGRID =====
+// ===== NODEMAILER SETUP =====
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   host: 'smtp.gmail.com',
@@ -74,9 +74,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK' });
 });
 
-// 1) Submit verification form
-// 1) Submit verification form
-// 1) Submit verification form
+// 1) Submit verification form - Auto-verify and create Shopify discount
 app.post('/api/verify-form', async (req, res) => {
   try {
     const { company_code, work_email } = req.body;
@@ -154,7 +152,7 @@ app.post('/api/verify-form', async (req, res) => {
       shopify_customer_id = create_customer.data.customer.id;
     }
 
-    // Create price rule (with customer_ids fix)
+    // Create price rule - FIXED: customer_selection: 'specific' with customer_ids
     const price_rule = await axios.post(
       `${shopify_api}/price_rules.json`,
       {
@@ -223,9 +221,7 @@ app.post('/api/verify-form', async (req, res) => {
   }
 });
 
-
-
-// 2) Verify email + create Shopify discount
+// 2) Verify email + create Shopify discount (Email verification route - optional)
 app.get('/api/verify-email', async (req, res) => {
   try {
     const { token, email } = req.query;
@@ -244,8 +240,7 @@ app.get('/api/verify-email', async (req, res) => {
     }
 
     const first_part = email.split('@')[0];
-    const first_name =
-      first_part.charAt(0).toUpperCase() + first_part.slice(1);
+    const first_name = first_part.charAt(0).toUpperCase() + first_part.slice(1);
     const random_code = crypto.randomBytes(3).toString('hex').toUpperCase();
     const discount_code = `INNERCIRCLE-${first_name.toUpperCase()}-${random_code}`;
 
@@ -279,26 +274,26 @@ app.get('/api/verify-email', async (req, res) => {
       shopify_customer_id = create_customer.data.customer.id;
     }
 
-    // Price rule
-  const price_rule = await axios.post(
-  `${shopify_api}/price_rules.json`,
-  {
-    price_rule: {
-      title: `Inner Circle - ${first_name}`,
-      target_type: 'line_item',
-      target_selection: 'all',
-      allocation_method: 'across',
-      value: -15,
-      value_type: 'percentage',
-      customer_selection: 'all',  // ❌ WRONG
-      starts_at: new Date().toISOString(),
-      usage_limit: null,
-      once_per_customer: false
-    }
-  },
-  { headers: shopify_headers }
-);
-
+    // Price rule - FIXED: customer_selection: 'specific' with customer_ids
+    const price_rule = await axios.post(
+      `${shopify_api}/price_rules.json`,
+      {
+        price_rule: {
+          title: `Inner Circle - ${first_name}`,
+          target_type: 'line_item',
+          target_selection: 'all',
+          allocation_method: 'across',
+          value: -15,
+          value_type: 'percentage',
+          customer_selection: 'specific',
+          customer_ids: [shopify_customer_id],
+          starts_at: new Date().toISOString(),
+          usage_limit: null,
+          once_per_customer: false
+        }
+      },
+      { headers: shopify_headers }
+    );
 
     const price_rule_id = price_rule.data.price_rule.id;
 
@@ -321,21 +316,20 @@ app.get('/api/verify-email', async (req, res) => {
       { $inc: { current_activations: 1 } }
     );
 
-    
-    
+    // Send confirmation email
     await transporter.sendMail({
-  from: process.env.GMAIL_USER,
-  to: email,
-  subject: 'Your ATHLOUN Inner Circle Discount Code',
-  html: `<p>Your code: <strong>${discount_code}</strong></p>`
-});
+      from: process.env.GMAIL_USER,
+      to: email,
+      subject: 'Your ATHLOUN Inner Circle Discount Code',
+      html: `<p>Your code: <strong>${discount_code}</strong></p>`
+    });
 
-res.json({
-  success: true,
-  message: 'Email verified! Your discount code has been generated.',
-  discount_code,
-  first_name
-});
+    res.json({
+      success: true,
+      message: 'Email verified! Your discount code has been generated.',
+      discount_code,
+      first_name
+    });
   } catch (error) {
     console.error('Verification error:', error);
     res.status(500).json({ error: 'An error occurred during verification.' });
@@ -343,7 +337,6 @@ res.json({
 });
 
 // 3) Admin: create company code
-
 app.post('/api/admin/company-codes', async (req, res) => {
   try {
     if (req.headers['x-admin-key'] !== process.env.ADMIN_KEY) {
