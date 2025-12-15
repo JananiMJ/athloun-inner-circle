@@ -171,6 +171,7 @@ app.post('/api/verify-form', async (req, res) => {
 });
 
 // 2) Verify email + create Shopify discount
+// 2) Verify email + create Shopify discount
 app.get('/api/verify-email', async (req, res) => {
   try {
     const { token, email } = req.query;
@@ -223,7 +224,7 @@ app.get('/api/verify-email', async (req, res) => {
       shopify_customer_id = create_customer.data.customer.id;
     }
 
-    // Create price rule
+    // ===== PRICE RULE: lifetime, 15%, unlimited, single customer =====
     const price_rule = await axios.post(
       `${shopify_api}/price_rules.json`,
       {
@@ -232,12 +233,14 @@ app.get('/api/verify-email', async (req, res) => {
           target_type: 'line_item',
           target_selection: 'all',
           allocation_method: 'across',
-          value: -15,
+          value: -15,                 // 15% off
           value_type: 'percentage',
-          customer_selection: 'all',
+          customer_selection: 'prerequisite',     // restrict to specific customers
+          prerequisite_customer_ids: [shopify_customer_id], // only this user [web:74][web:99]
           starts_at: new Date().toISOString(),
-          usage_limit: null,
-          once_per_customer: false
+          ends_at: null,              // no end date = lifetime [web:74]
+          usage_limit: null,          // unlimited total uses [web:92]
+          once_per_customer: false    // same customer can reuse forever [web:92][web:99]
         }
       },
       { headers: shopify_headers }
@@ -245,7 +248,7 @@ app.get('/api/verify-email', async (req, res) => {
 
     const price_rule_id = price_rule.data.price_rule.id;
 
-    // Create discount code
+    // Create discount code (no per-code limit; uses price rule's unlimited settings)
     await axios.post(
       `${shopify_api}/price_rules/${price_rule_id}/discount_codes.json`,
       { discount_code: { code: discount_code } },
