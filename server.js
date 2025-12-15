@@ -76,6 +76,7 @@ app.get('/health', (req, res) => {
 
 // 1) Submit verification form
 // 1) Submit verification form
+// 1) Submit verification form
 app.post('/api/verify-form', async (req, res) => {
   try {
     const { company_code, work_email } = req.body;
@@ -117,11 +118,73 @@ app.post('/api/verify-form', async (req, res) => {
       });
     }
 
-    // SIMPLIFIED: Skip Shopify for now, just save to MongoDB
+    // Generate discount code
     const first_part = work_email.split('@')[0];
     const first_name = first_part.charAt(0).toUpperCase() + first_part.slice(1);
-    const discount_code = `INNERCIRCLE-${first_name.toUpperCase()}-TEST123`;
+    const random_code = crypto.randomBytes(3).toString('hex').toUpperCase();
+    const discount_code = `INNERCIRCLE-${first_name.toUpperCase()}-${random_code}`;
 
+    const shopify_api = `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01`;
+    const shopify_headers = {
+      'X-Shopify-Access-Token': process.env.SHOPIFY_TOKEN,
+      'Content-Type': 'application/json'
+    };
+
+    // Find or create customer in Shopify
+    let customer_response = await axios.get(
+      `${shopify_api}/customers/search.json?query=email:${work_email}`,
+      { headers: shopify_headers }
+    ).catch(() => ({ data: { customers: [] } }));
+
+    let shopify_customer_id;
+    if (customer_response.data.customers.length > 0) {
+      shopify_customer_id = customer_response.data.customers[0].id;
+    } else {
+      const create_customer = await axios.post(
+        `${shopify_api}/customers.json`,
+        {
+          customer: {
+            email: work_email,
+            first_name,
+            verified_email: true
+          }
+        },
+        { headers: shopify_headers }
+      );
+      shopify_customer_id = create_customer.data.customer.id;
+    }
+
+    // Create price rule (with customer_ids fix)
+    const price_rule = await axios.post(
+      `${shopify_api}/price_rules.json`,
+      {
+        price_rule: {
+          title: `Inner Circle - ${first_name}`,
+          target_type: 'line_item',
+          target_selection: 'all',
+          allocation_method: 'across',
+          value: -15,
+          value_type: 'percentage',
+          customer_selection: 'specific',
+          customer_ids: [shopify_customer_id],
+          starts_at: new Date().toISOString(),
+          usage_limit: null,
+          once_per_customer: false
+        }
+      },
+      { headers: shopify_headers }
+    );
+
+    const price_rule_id = price_rule.data.price_rule.id;
+
+    // Create discount code
+    await axios.post(
+      `${shopify_api}/price_rules/${price_rule_id}/discount_codes.json`,
+      { discount_code: { code: discount_code } },
+      { headers: shopify_headers }
+    );
+
+    // Save to MongoDB
     let member = await Member.findOne({ work_email });
     if (!member) {
       member = new Member({
@@ -129,11 +192,13 @@ app.post('/api/verify-form', async (req, res) => {
         company_code,
         company_name: company.company_name,
         first_name,
+        shopify_customer_id,
         discount_code,
         verification_status: 'verified',
         verified_at: new Date()
       });
     } else {
+      member.shopify_customer_id = shopify_customer_id;
       member.discount_code = discount_code;
       member.verification_status = 'verified';
       member.verified_at = new Date();
@@ -215,24 +280,25 @@ app.get('/api/verify-email', async (req, res) => {
     }
 
     // Price rule
-    const price_rule = await axios.post(
-      `${shopify_api}/price_rules.json`,
-      {
-        price_rule: {
-          title: `Inner Circle - ${first_name}`,
-          target_type: 'line_item',
-          target_selection: 'all',
-          allocation_method: 'across',
-          value: -15,
-          value_type: 'percentage',
-          customer_selection: 'all',
-          starts_at: new Date().toISOString(),
-          usage_limit: null,
-          once_per_customer: false
-        }
-      },
-      { headers: shopify_headers }
-    );
+  const price_rule = await axios.post(
+  `${shopify_api}/price_rules.json`,
+  {
+    price_rule: {
+      title: `Inner Circle - ${first_name}`,
+      target_type: 'line_item',
+      target_selection: 'all',
+      allocation_method: 'across',
+      value: -15,
+      value_type: 'percentage',
+      customer_selection: 'all',  // ❌ WRONG
+      starts_at: new Date().toISOString(),
+      usage_limit: null,
+      once_per_customer: false
+    }
+  },
+  { headers: shopify_headers }
+);
+
 
     const price_rule_id = price_rule.data.price_rule.id;
 
