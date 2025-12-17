@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
@@ -11,6 +11,9 @@ const app = express();
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// ===== SENDGRID SETUP =====
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -53,18 +56,6 @@ const memberSchema = new mongoose.Schema({
 
 const CompanyCode = mongoose.model('CompanyCode', companySchema, 'companycodes');
 const Member = mongoose.model('Member', memberSchema, 'members');
-
-// ===== GMAIL NODEMAILER SETUP =====
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.GMAIL_USER,          // your Gmail address
-    pass: process.env.GMAIL_APP_PASSWORD   // Gmail app password
-  }
-});
 
 // ===== ROUTES =====
 
@@ -136,10 +127,10 @@ app.post('/api/verify-form', async (req, res) => {
     const verification_link =
       `${process.env.FRONTEND_URL}?token=${verification_token}&email=${encodeURIComponent(work_email)}`;
 
-    // Send verification email via Gmail
-    await transporter.sendMail({
+    // ===== SEND VERIFICATION EMAIL VIA SENDGRID =====
+    const msg = {
       to: work_email,
-      from: process.env.GMAIL_USER,
+      from: process.env.SENDGRID_FROM_EMAIL,
       subject: 'Verify Your ATHLOUN Inner Circle Access',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -153,24 +144,32 @@ app.post('/api/verify-form', async (req, res) => {
               <a href="${verification_link}" style="background: #cd853f; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">Verify Email</a>
             </div>
             <p style="color: #666; font-size: 12px;">This link expires in 24 hours.</p>
+            <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+            <p style="color: #999; font-size: 11px;">If you didn't request this email, you can ignore it.</p>
           </div>
         </div>
       `
-    });
+    };
 
-    return res.json({
-      success: true,
-      message: `Check your email! We sent a verification link to ${work_email}.`
-    });
-  console.log('Verification email sent to', work_email);
-} catch (mailErr) {
-  console.error('Email send error:', mailErr.message);
-  console.error('Full mail error:', mailErr);
-  return res.status(500).json({ error: 'Could not send verification email.' });
-}
+    try {
+      await sgMail.send(msg);
+      console.log('✓ Verification email sent to', work_email);
+      
+      return res.json({
+        success: true,
+        message: `Check your email! We sent a verification link to ${work_email}.`
+      });
+    } catch (mailErr) {
+      console.error('✗ SendGrid error:', mailErr.message);
+      console.error('Full error:', mailErr.response?.body || mailErr);
+      return res.status(500).json({ error: 'Could not send verification email.' });
+    }
+  } catch (error) {
+    console.error('Form submission error:', error);
+    return res.status(500).json({ error: 'An error occurred. Please try again.' });
+  }
 });
 
-// 2) Verify email + create Shopify discount
 // 2) Verify email + create Shopify discount
 app.get('/api/verify-email', async (req, res) => {
   try {
@@ -233,14 +232,14 @@ app.get('/api/verify-email', async (req, res) => {
           target_type: 'line_item',
           target_selection: 'all',
           allocation_method: 'across',
-          value: -15,                 // 15% off
+          value: -15,
           value_type: 'percentage',
-          customer_selection: 'prerequisite',     // restrict to specific customers
-          prerequisite_customer_ids: [shopify_customer_id], // only this user [web:74][web:99]
+          customer_selection: 'prerequisite',
+          prerequisite_customer_ids: [shopify_customer_id],
           starts_at: new Date().toISOString(),
-          ends_at: null,              // no end date = lifetime [web:74]
-          usage_limit: null,          // unlimited total uses [web:92]
-          once_per_customer: false    // same customer can reuse forever [web:92][web:99]
+          ends_at: null,
+          usage_limit: null,
+          once_per_customer: false
         }
       },
       { headers: shopify_headers }
@@ -248,7 +247,7 @@ app.get('/api/verify-email', async (req, res) => {
 
     const price_rule_id = price_rule.data.price_rule.id;
 
-    // Create discount code (no per-code limit; uses price rule's unlimited settings)
+    // Create discount code
     await axios.post(
       `${shopify_api}/price_rules/${price_rule_id}/discount_codes.json`,
       { discount_code: { code: discount_code } },
