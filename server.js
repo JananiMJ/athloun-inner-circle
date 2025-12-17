@@ -125,7 +125,7 @@ app.post('/api/verify-form', async (req, res) => {
     await member.save();
 
     const verification_link =
-      `${process.env.FRONTEND_URL}?token=${verification_token}&email=${encodeURIComponent(work_email)}`;
+      `${process.env.FRONTEND_URL}/pages/inner-circle?token=${verification_token}&email=${encodeURIComponent(work_email)}`;
 
     // ===== SEND VERIFICATION EMAIL VIA SENDGRID =====
     const msg = {
